@@ -39,8 +39,11 @@ HTML/CSS/JS served as static files: no build step, no dependencies, no framework
   (`cols`×`rows`) and their outline is traced along cell edges
   (`traceMask` + `collinearMerge`), so every wall segment is axis-aligned. The
   grid is never drawn. This is the whole point — keep the walls straight and the
-  grid invisible. The renderer only *wobbles* wall segments with pinned
-  endpoints (`wobbleEdges`) for a hand-drawn look; corners stay crisp.
+  grid invisible. The renderer keeps the straight segments but rounds every
+  corner into an arc (`roundedPath`, radius clamped under half each adjoining
+  wall so lanes never pinch) so holes sweep like real mini-golf, and wraps the
+  field/hazards/walls in a subtle `feTurbulence` displacement filter for a
+  hand-drawn wobble. Tee/cup/flag/labels stay outside the filter to read crisply.
 - **Full-length holes**: `carveRegion` descends from a tee at the top to a cup
   at the bottom with horizontal jogs; tee/cup are pinned to the top-most and
   bottom-most playable cells (`extremePlayable`) so they're always at opposite

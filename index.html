@@ -228,31 +228,31 @@
     flag: '#e2604f', flagEdge: '#c14b3c'
   };
 
-  /* ----------------------------- wobble ------------------------------ */
-  // Draw a straight segment as a hand-wobbled path, but PIN the endpoints
-  // so corners stay crisp and the wall still reads as straight.
-  function wobbleEdges(points, closed, rng, amp) {
-    var d = '', n = points.length;
-    var last = closed ? n : n - 1;
-    for (var i = 0; i < last; i++) {
-      var a = points[i], b = points[(i + 1) % n];
-      if (i === 0) d += 'M' + fmt(a.x) + ' ' + fmt(a.y);
-      var dx = b.x - a.x, dy = b.y - a.y;
-      var len = Math.sqrt(dx * dx + dy * dy) || 1;
-      var px = -dy / len, py = dx / len;              // unit perpendicular
-      var steps = Math.max(1, Math.round(len / 20));
-      for (var s = 1; s <= steps; s++) {
-        var t = s / steps;
-        var jx = 0, jy = 0;
-        if (s < steps) {                               // interior points jitter
-          var j = (rng.next() * 2 - 1) * amp;
-          jx = px * j; jy = py * j;
-        }
-        d += 'L' + fmt(a.x + dx * t + jx) + ' ' + fmt(a.y + dy * t + jy);
-      }
+  /* --------------------------- rounded walls -------------------------- */
+  // Keep the straight walls, but round every corner with an arc so holes
+  // sweep like real mini-golf lanes instead of turning at hard right
+  // angles. `radius` per corner is clamped to under half of each adjoining
+  // wall so narrow lanes never pinch shut. The organic hand-drawn wobble
+  // then comes from a displacement filter over the whole hole (see defs).
+  function roundedPath(points, radius) {
+    var n = points.length;
+    if (n < 3) return pathPts(points, true);
+    var d = '';
+    for (var i = 0; i < n; i++) {
+      var cur = points[i];
+      var prev = points[(i - 1 + n) % n];
+      var nxt = points[(i + 1) % n];
+      var vinx = cur.x - prev.x, viny = cur.y - prev.y;
+      var voutx = nxt.x - cur.x, vouty = nxt.y - cur.y;
+      var lin = Math.hypot(vinx, viny) || 1;
+      var lout = Math.hypot(voutx, vouty) || 1;
+      var r = Math.min(radius, lin * 0.45, lout * 0.45);
+      var appx = cur.x - vinx / lin * r, appy = cur.y - viny / lin * r;
+      var depx = cur.x + voutx / lout * r, depy = cur.y + vouty / lout * r;
+      d += (i === 0 ? 'M' : 'L') + fmt(appx) + ' ' + fmt(appy);
+      if (r > 0.1) d += 'Q' + fmt(cur.x) + ' ' + fmt(cur.y) + ' ' + fmt(depx) + ' ' + fmt(depy);
     }
-    if (closed) d += 'Z';
-    return d;
+    return d + 'Z';
   }
   function fmt(v) { return Math.round(v * 10) / 10; }
   function pathPts(points, closed) {
@@ -270,35 +270,50 @@
   function renderHole(hole, seed) {
     var rng = PMG.makeRng(seed + ':wob:' + hole.index);
     var v = hole.view;
+    // per-hole corner radius (varies the curviness) and a filter seed
+    var radius = hole.cell * (0.7 + rng.next() * 0.6);
+    var fid = 'rough' + hole.index;
+    var fseed = (hole.index * 37 + 11) % 100;
+
     var s = '<svg viewBox="' + fmt(v.x) + ' ' + fmt(v.y) + ' ' + fmt(v.w) + ' ' + fmt(v.h) +
       '" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">';
 
+    // A gentle displacement filter gives the whole hole a hand-drawn wobble
+    // over the smooth rounded geometry — organic, but the walls stay straight.
+    s += '<defs><filter id="' + fid + '" x="-8%" y="-6%" width="116%" height="112%">' +
+      '<feTurbulence type="fractalNoise" baseFrequency="0.012" numOctaves="2" seed="' + fseed + '" result="n"/>' +
+      '<feDisplacementMap in="SourceGraphic" in2="n" scale="4.5" xChannelSelector="R" yChannelSelector="G"/>' +
+      '</filter></defs>';
+
+    // Everything that should look hand-drawn goes inside the filtered group;
+    // the tee, cup, flag and labels stay outside so they read crisply.
+    s += '<g filter="url(#' + fid + ')">';
+
     // field
-    s += '<path d="' + wobbleEdges(hole.outline, true, rng, 1.6) +
-      '" fill="' + COL.field + '" stroke="none"/>';
+    s += '<path d="' + roundedPath(hole.outline, radius) + '" fill="' + COL.field + '" stroke="none"/>';
 
     // hazards (under the wall)
-    for (var i = 0; i < hole.hazards.length; i++) s += renderHazard(hole.hazards[i], rng);
+    for (var i = 0; i < hole.hazards.length; i++) s += renderHazard(hole.hazards[i], radius);
 
-    // baffles
+    // baffles — short internal wall stubs
     for (var b = 0; b < hole.baffles.length; b++) {
-      var bf = hole.baffles[b];
-      s += '<path d="' + wobbleEdges(bf, false, rng, 1.2) +
+      s += '<path d="' + pathPts(hole.baffles[b], false) +
         '" fill="none" stroke="' + COL.wall + '" stroke-width="6" stroke-linecap="round"/>';
     }
 
     // the wall
-    s += '<path d="' + wobbleEdges(hole.outline, true, rng, 1.9) +
+    s += '<path d="' + roundedPath(hole.outline, radius) +
       '" fill="none" stroke="' + COL.wall + '" stroke-width="5" stroke-linejoin="round" stroke-linecap="round"/>';
 
+    s += '</g>';
     s += renderTee(hole);
     s += renderCup(hole);
     s += '</svg>';
     return s;
   }
 
-  function renderHazard(h, rng) {
-    var d = wobbleEdges(h.outline, true, rng, 1.4);
+  function renderHazard(h, radius) {
+    var d = roundedPath(h.outline, radius * 0.85);
     var out = '';
     if (h.type === 'sand') {
       out += '<path d="' + d + '" fill="' + COL.sand + '" stroke="' + COL.sandDot + '" stroke-width="1.5"/>';
