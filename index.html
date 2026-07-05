@@ -225,6 +225,7 @@
     water: '#e3eff6', waterLine: '#93bcd6',
     rock: '#ececee', rockLine: '#a9abb0', pebble: '#f6f6f7',
     treeFill: '#eef4e6', treeEdge: '#cfe0c1', treeTop: '#6f9e5f', treeTopEdge: '#4d7a45', treeTrunk: '#9a7a52',
+    islandFill: '#eaf3e0', flower2: '#e8b24a', flower3: '#c98bd0',
     flag: '#e2604f', flagEdge: '#c14b3c'
   };
 
@@ -292,18 +293,33 @@
     // field
     s += '<path d="' + roundedPath(hole.outline, radius) + '" fill="' + COL.field + '" stroke="none"/>';
 
-    // hazards (under the wall)
-    for (var i = 0; i < hole.hazards.length; i++) s += renderHazard(hole.hazards[i], radius);
-
-    // baffles — short internal wall stubs
-    for (var b = 0; b < hole.baffles.length; b++) {
-      s += '<path d="' + pathPts(hole.baffles[b], false) +
-        '" fill="none" stroke="' + COL.wall + '" stroke-width="6" stroke-linecap="round"/>';
+    // terrain hazards (under the wall)
+    for (var i = 0; i < hole.hazards.length; i++) {
+      if (hole.hazards[i].type !== 'bar' && hole.hazards[i].type !== 'post') {
+        s += renderHazard(hole.hazards[i], radius);
+      }
     }
 
     // the wall
     s += '<path d="' + roundedPath(hole.outline, radius) +
       '" fill="none" stroke="' + COL.wall + '" stroke-width="5" stroke-linejoin="round" stroke-linecap="round"/>';
+
+    // solid obstacles ON TOP of the wall — bumper bars and posts
+    for (var o = 0; o < hole.hazards.length; o++) {
+      var ob = hole.hazards[o];
+      if (ob.type === 'bar') {
+        s += '<path d="' + pathPts(ob.seg, false) + '" fill="none" stroke="' + COL.wall +
+          '" stroke-width="' + fmt(ob.width) + '" stroke-linecap="round"/>';
+      } else if (ob.type === 'post') {
+        // a solid rounded-square bumper block — clearly distinct from the
+        // ringed tee and the flagged cup
+        var ps = ob.r * 1.7, px = ob.pos.x - ps, py = ob.pos.y - ps, pr = ob.r * 0.5;
+        s += '<rect x="' + fmt(px) + '" y="' + fmt(py) + '" width="' + fmt(ps * 2) +
+          '" height="' + fmt(ps * 2) + '" rx="' + fmt(pr) + '" fill="' + COL.wall + '"/>';
+        s += '<rect x="' + fmt(px + 3) + '" y="' + fmt(py + 3) + '" width="' + fmt(ps * 2 - 10) +
+          '" height="' + fmt(ps * 0.7) + '" rx="' + fmt(pr * 0.6) + '" fill="#4a544e"/>';
+      }
+    }
 
     s += '</g>';
     s += renderTee(hole);
@@ -333,6 +349,13 @@
         var cr = centerOf(h.cells[r]);
         out += pebble(cr.x - 6, cr.y + 2, 7) + pebble(cr.x + 7, cr.y - 4, 6) + pebble(cr.x + 3, cr.y + 8, 5);
       }
+    } else if (h.type === 'island') { // flower-bed planter obstacle
+      out += '<path d="' + d + '" fill="' + COL.islandFill + '" stroke="' + COL.wall + '" stroke-width="3"/>';
+      for (var f = 0; f < h.cells.length; f++) {
+        var cf = centerOf(h.cells[f]);
+        out += flower(cf.x - 6, cf.y - 2, COL.flag) + flower(cf.x + 6, cf.y + 4, COL.flower2) +
+          flower(cf.x + 2, cf.y - 8, COL.flower3);
+      }
     } else { // trees
       out += '<path d="' + d + '" fill="' + COL.treeFill + '" stroke="' + COL.treeEdge + '" stroke-width="1.5"/>';
       for (var t = 0; t < h.cells.length; t++) {
@@ -341,6 +364,11 @@
       }
     }
     return out;
+  }
+
+  function flower(x, y, color) {
+    return '<circle cx="' + fmt(x) + '" cy="' + fmt(y) + '" r="3" fill="' + color + '" stroke="#7a5a2a" stroke-width="0.8"/>' +
+      '<circle cx="' + fmt(x) + '" cy="' + fmt(y) + '" r="1" fill="#fff3c4"/>';
   }
 
   function dot(x, y) {
@@ -440,7 +468,8 @@
       '<li><b>Close your eyes</b> and drag the marker until you decide to stop. That is <b>1 stroke</b>.</li>' +
       '<li>Start your next stroke where the last one ended. Keep going until you reach the <b>flag</b>.</li>' +
       '<li>Write down how many strokes each hole took. <b>Fewest strokes wins!</b></li>' +
-      '<li>Try to stay inside the walls, and go around the sand, water, rocks and trees.</li>' +
+      '<li>Try to stay inside the walls, and go around the sand, water, trees, ' +
+      'rocks, flower beds, posts and bumpers.</li>' +
       '</ol></div>' +
       '<div class="panel"><h2>On the course</h2><div class="legend">' +
       legendItem('var(--field)', 'Fairway') +
@@ -448,6 +477,8 @@
       legendItem('var(--water)', 'Water') +
       legendItem('var(--rock)', 'Rocks') +
       legendItem('#eef4e6', 'Trees') +
+      legendItem('#eaf3e0', 'Flower bed') +
+      legendItem('var(--ink)', 'Posts & bumpers') +
       legendItem('var(--flag)', 'Flag = the hole') +
       '</div></div>' +
       '<div class="panel"><h2>Fun variations</h2><ul>' +

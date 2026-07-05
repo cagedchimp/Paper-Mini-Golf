@@ -28,9 +28,13 @@
   var CELL = 46;          // world units per grid cell
   var MARGIN = 34;        // world padding around the grid
 
-  // Hazards that stop the ball (block the reachability check). Sand and
-  // water are passable — you just drag across them, they only flavor / score.
-  var BLOCKS_PATH = { sand: false, water: false, rocks: true, trees: true };
+  // Hazards / obstacles that stop the ball (block the reachability check).
+  // Sand and water are passable — you just drag across them, they only
+  // flavor / score. Rocks, trees, posts, bumper bars and islands are solid.
+  var BLOCKS_PATH = {
+    sand: false, water: false,
+    rocks: true, trees: true, island: true, post: true, bar: true
+  };
 
   /* ------------------------------------------------------------------ *
    * Seeded RNG (xmur3 + mulberry32) — same as the reference app        *
@@ -179,18 +183,33 @@
 
     var x = rng.int(minX, maxX);
     var tee = [x, pad];
-    var jogs = rng.int(1, 3);             // number of horizontal doglegs
+    // More doglegs -> longer, more zig-zagging holes. Capped by how many
+    // descents fit in the available height.
+    var maxByHeight = Math.max(2, Math.floor((bottom - pad) / 2) - 1);
+    var jogs = Math.min(rng.int(3, 6), maxByHeight);
     var segTop = pad;
+    var lastDir = rng.pick([-1, 1]);
 
     for (var j = 0; j <= jogs; j++) {
-      var yTarget = (j === jogs) ? bottom : Math.min(bottom, segTop + rng.int(2, 4));
+      var remaining = jogs - j;                              // descents still to come
+      var room = bottom - segTop;
+      var yTarget = (j === jogs) ? bottom
+        : Math.min(bottom - remaining, segTop + rng.int(2, 3));
+      if (yTarget <= segTop) yTarget = Math.min(bottom, segTop + 1);
       thicken(g, cols, rows, x, segTop, x, yTarget, lane);   // descend
       segTop = yTarget;
       if (j < jogs) {                                        // then jog sideways
-        var dir = (x <= minX) ? 1 : (x >= maxX ? -1 : rng.pick([-1, 1]));
-        var nx = clampi(x + dir * rng.int(2, 3), minX, maxX);
-        if (nx === x) nx = clampi(x - dir * rng.int(2, 3), minX, maxX);
+        // sweep across, biased to alternate sides for a real slalom
+        var dir = (x <= minX) ? 1 : (x >= maxX ? -1
+          : (rng.chance(0.7) ? -lastDir : rng.pick([-1, 1])));
+        lastDir = dir;
+        var nx = clampi(x + dir * rng.int(2, 4), minX, maxX);
+        if (nx === x) nx = clampi(x - dir * rng.int(2, 4), minX, maxX);
         thicken(g, cols, rows, x, segTop, nx, segTop, lane);
+        // occasional wider "room" at a bend for more interesting play space
+        if (rng.chance(0.4)) {
+          carveRect(g, cols, rows, nx - lane - 1, segTop - lane, nx + lane + 1, segTop + lane);
+        }
         x = nx;
       }
     }
@@ -358,7 +377,7 @@
    * Hazards + baffles                                                   *
    * ------------------------------------------------------------------ */
 
-  var HAZARD_TYPES = ['sand', 'sand', 'water', 'rocks', 'trees'];
+  var HAZARD_TYPES = ['sand', 'sand', 'water', 'water', 'rocks', 'trees', 'trees', 'island'];
 
   // Grow a small orthogonal blob of playable cells around a seed, staying
   // off the tee, the cup and the protected corridor.
@@ -387,17 +406,12 @@
     return blob;
   }
 
-  function placeHazards(rng, grid, cols, rows, tee, cup, prot) {
-    var avoid = new Uint8Array(cols * rows);
-    // Reserve a ring around tee and cup so they stay clear.
-    markRing(avoid, cols, rows, tee, 1);
-    markRing(avoid, cols, rows, cup, 1);
-
-    var hazards = [];
-    var count = rng.int(1, 3);
+  // Terrain hazards: sand / water / rocks / trees / flower-bed islands, grown
+  // as blobs. Pushes into `out` and reserves their cells in `avoid`.
+  function placeTerrain(rng, grid, cols, rows, avoid, prot, out, count) {
     for (var h = 0; h < count; h++) {
       var type = rng.pick(HAZARD_TYPES);
-      var size = type === 'water' ? rng.int(2, 5) : rng.int(1, 3);
+      var size = (type === 'water' || type === 'island') ? rng.int(3, 6) : rng.int(1, 3);
       var blob = growBlob(rng, grid, cols, rows, prot, avoid, size);
       if (!blob.length) continue;
       var mask = makeGrid(cols, rows);
@@ -406,13 +420,12 @@
         mask[id] = 1; avoid[id] = 1;
         markRing(avoid, cols, rows, blob[b], 0);
       }
-      hazards.push({
+      out.push({
         type: type,
         cells: blob,
         outline: traceMask(mask, cols, rows).map(cornerToWorld)
       });
     }
-    return hazards;
   }
 
   function markRing(avoid, cols, rows, cell, extra) {
@@ -426,36 +439,80 @@
     }
   }
 
-  // Short internal wall stubs anchored to the outer wall, pointing inward —
-  // classic mini-golf blockers to route around. Kept to a single cell of
-  // reach so they can never seal a lane.
-  function placeBaffles(rng, grid, cols, rows, tee, cup, prot) {
+  // Bumper bars: thick rounded wall stubs that reach in from the outer wall
+  // to make a slalom, alternating sides down the hole. They cover the cells
+  // they span (so the reachability gate keeps a gap open) and carry a world
+  // segment + width for the renderer.
+  function placeBars(rng, grid, cols, rows, tee, cup, prot, avoid, out) {
     var candidates = [];
     for (var r = 0; r < rows; r++) {
       for (var c = 0; c < cols; c++) {
         var id = gi(cols, c, r);
-        if (!grid[id] || prot[id]) continue;
+        if (!grid[id] || prot[id] || avoid[id]) continue;
         if (near(c, r, tee, 1) || near(c, r, cup, 1)) continue;
-        for (var k = 0; k < 4; k++) {
-          var oc = c + N4[k][0], or_ = r + N4[k][1];
-          if (!getCell(grid, cols, rows, oc, or_)) { candidates.push([c, r, N4[k]]); break; }
+        for (var k = 0; k < 4; k++) {                 // only orthogonal (side) walls
+          if (k > 1) break;                           // k 0,1 = left/right neighbours
+          var oc = c + (k === 0 ? -1 : 1), or_ = r;
+          if (!getCell(grid, cols, rows, oc, or_)) { candidates.push([c, r, (k === 0 ? -1 : 1)]); break; }
         }
       }
     }
-    var baffles = [];
-    var want = rng.int(0, 2);
-    for (var i = 0; i < want && candidates.length; i++) {
-      var pick = candidates.splice(rng.int(0, candidates.length - 1), 1)[0];
-      var cx = pick[0], cy = pick[1], out = pick[2];
-      // midpoint of the wall edge on side `out`, then a stub inward.
-      var ex = cx + 0.5 + out[0] * 0.5, ey = cy + 0.5 + out[1] * 0.5;
-      var ix = cx + 0.5 - out[0] * 0.9, iy = cy + 0.5 - out[1] * 0.9;
-      baffles.push([
-        { x: MARGIN + ex * CELL, y: MARGIN + ey * CELL },
-        { x: MARGIN + ix * CELL, y: MARGIN + iy * CELL }
-      ]);
+    candidates.sort(function (a, b) { return a[1] - b[1]; });   // top -> bottom
+    var want = rng.int(2, 4);
+    var placed = 0, lastY = -99;
+    for (var i = 0; i < candidates.length && placed < want; i++) {
+      var cand = candidates[i];
+      var cx = cand[0], cy = cand[1], side = cand[2];   // side = -1 wall on left, +1 wall on right
+      if (cy - lastY < 2) continue;                     // space them out vertically
+      var inward = -side;                               // reach into the lane
+      var cells = [[cx, cy]];
+      var reach = rng.int(1, 2);
+      var nx = cx;
+      for (var s = 1; s <= reach; s++) {
+        var tx = cx + inward * s;
+        if (!getCell(grid, cols, rows, tx, cy) || prot[gi(cols, tx, cy)]) break;
+        cells.push([tx, cy]); nx = tx;
+      }
+      lastY = cy;
+      placed++;
+      for (var m = 0; m < cells.length; m++) { avoid[gi(cols, cells[m][0], cells[m][1])] = 1; }
+      var outerX = cx + 0.5 + side * 0.5;               // touch the wall
+      var innerX = nx + 0.5 - inward * 0.15;
+      out.push({
+        type: 'bar',
+        cells: cells,
+        seg: [
+          { x: MARGIN + outerX * CELL, y: MARGIN + (cy + 0.5) * CELL },
+          { x: MARGIN + innerX * CELL, y: MARGIN + (cy + 0.5) * CELL }
+        ],
+        width: CELL * 0.4
+      });
     }
-    return baffles;
+  }
+
+  // Posts / pillars: single circular bumpers standing in open space.
+  function placePosts(rng, grid, cols, rows, tee, cup, prot, avoid, out) {
+    var spots = [];
+    for (var r = 1; r < rows - 1; r++) {
+      for (var c = 1; c < cols - 1; c++) {
+        var id = gi(cols, c, r);
+        if (!grid[id] || prot[id] || avoid[id]) continue;
+        if (near(c, r, tee, 1) || near(c, r, cup, 1)) continue;
+        // interior: all four neighbours playable, so it reads as a pillar
+        if (getCell(grid, cols, rows, c - 1, r) && getCell(grid, cols, rows, c + 1, r) &&
+            getCell(grid, cols, rows, c, r - 1) && getCell(grid, cols, rows, c, r + 1)) {
+          spots.push([c, r]);
+        }
+      }
+    }
+    var want = rng.int(1, 3);
+    for (var i = 0; i < want && spots.length; i++) {
+      var p = spots.splice(rng.int(0, spots.length - 1), 1)[0];
+      if (avoid[gi(cols, p[0], p[1])]) continue;
+      avoid[gi(cols, p[0], p[1])] = 1;
+      markRing(avoid, cols, rows, p, 0);
+      out.push({ type: 'post', cells: [p], pos: cellCenter(p[0], p[1]), r: CELL * 0.28 });
+    }
   }
 
   function near(c, r, cell, rad) {
@@ -478,25 +535,39 @@
 
   function generateHole(seed, index) {
     var rng = makeRng(seed + '#' + index);
-    var cols = rng.pick([7, 8, 8, 9]);
-    var rows = rng.pick([10, 11, 12]);
+    var cols = rng.pick([8, 9, 9, 10]);
+    var rows = rng.pick([11, 12, 13, 14]);
 
     var region = carveRegion(rng, cols, rows);
     var grid = region.grid, tee = region.tee, cup = region.cup;
 
     var prot = protectedCorridor(grid, cols, rows, tee, cup);
-    var hRng = rng.fork('hazards');
-    var hazards = placeHazards(hRng, grid, cols, rows, tee, cup, prot);
 
-    // Drop blocking hazards (deterministically, last first) until the cup is
-    // reachable again. Passable hazards never affect this.
+    // Shared reservation mask so hazards and obstacles never overlap or
+    // crowd the tee / cup.
+    var avoid = new Uint8Array(cols * rows);
+    markRing(avoid, cols, rows, tee, 1);
+    markRing(avoid, cols, rows, cup, 1);
+
+    var hazards = [];
+    var area = 0;
+    for (var a = 0; a < grid.length; a++) area += grid[a];
+    var terrainCount = Math.max(2, Math.min(5, Math.round(area / 22)));
+    placeTerrain(rng.fork('terrain'), grid, cols, rows, avoid, prot, hazards, terrainCount);
+    placeBars(rng.fork('bars'), grid, cols, rows, tee, cup, prot, avoid, hazards);
+    placePosts(rng.fork('posts'), grid, cols, rows, tee, cup, prot, avoid, hazards);
+
+    // Drop the last-placed BLOCKING obstacle (deterministically) until the
+    // cup is reachable again. Passable hazards never affect this.
     var blocked = blockedMask(grid, cols, rows, hazards);
-    while (!isReachable(grid, cols, rows, tee, cup, blocked) && hazards.length) {
-      hazards.pop();
+    while (!isReachable(grid, cols, rows, tee, cup, blocked)) {
+      var removed = false;
+      for (var i = hazards.length - 1; i >= 0; i--) {
+        if (BLOCKS_PATH[hazards[i].type]) { hazards.splice(i, 1); removed = true; break; }
+      }
+      if (!removed) break;
       blocked = blockedMask(grid, cols, rows, hazards);
     }
-
-    var baffles = placeBaffles(rng.fork('baffles'), grid, cols, rows, tee, cup, prot);
 
     var outline = traceMask(grid, cols, rows).map(cornerToWorld);
     var par = Math.max(2, Math.min(4, 2 + region.jogs));
@@ -522,7 +593,6 @@
       view: view,
       grid: grid,
       outline: outline,
-      baffles: baffles,
       tee: { cell: tee, pos: cellCenter(tee[0], tee[1]) },
       cup: { cell: cup, pos: cellCenter(cup[0], cup[1]) },
       hazards: hazards,

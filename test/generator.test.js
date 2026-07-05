@@ -69,7 +69,7 @@ function assert(cond, msg) {
   // Uint8Array grids don't JSON-stringify usefully; drop them for compare.
   function strip(course) {
     return course.holes.map(function (h) {
-      return { outline: h.outline, tee: h.tee, cup: h.cup, hazards: h.hazards, baffles: h.baffles, par: h.par };
+      return { outline: h.outline, tee: h.tee, cup: h.cup, hazards: h.hazards, par: h.par };
     });
   }
 })();

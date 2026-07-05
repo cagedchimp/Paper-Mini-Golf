@@ -45,13 +45,21 @@ HTML/CSS/JS served as static files: no build step, no dependencies, no framework
   field/hazards/walls in a subtle `feTurbulence` displacement filter for a
   hand-drawn wobble. Tee/cup/flag/labels stay outside the filter to read crisply.
 - **Full-length holes**: `carveRegion` descends from a tee at the top to a cup
-  at the bottom with horizontal jogs; tee/cup are pinned to the top-most and
-  bottom-most playable cells (`extremePlayable`) so they're always at opposite
-  ends. Each hole crops its SVG to a `view` bbox so it fills its card.
+  at the bottom with several horizontal jogs (slalom-biased for zig-zags, with
+  occasional wider "room" bulges at bends); tee/cup are pinned to the top-most
+  and bottom-most playable cells (`extremePlayable`) so they're always at
+  opposite ends. Each hole crops its SVG to a `view` bbox so it fills its card.
+- **Obstacles** all live in `hole.hazards`, each tagged by `type`. Terrain
+  blobs (`placeTerrain`): sand, water, rocks, trees, flower-bed island. Solid
+  obstacles: `bar` (thick bumper wall reaching in from the outer wall, placed
+  in a slalom by `placeBars`) and `post` (a rounded-square pillar block from
+  `placePosts`). A shared `avoid` mask keeps them from overlapping or crowding
+  the tee/cup. Render posts/bars as distinct shapes — never a ringed circle
+  (reads as the tee) or a plain dark disc (reads as the cup).
 - **Playability**: `isReachable` flood-fills tee→cup over playable, non-blocking
-  cells. Sand and water are passable (`BLOCKS_PATH`), rocks/trees block;
-  blocking hazards that would seal the hole are dropped until it's reachable
-  again. This is a sanity gate, not a dice solver.
+  cells. Sand and water are passable (`BLOCKS_PATH`); rocks, trees, island,
+  posts and bars block. The generator drops the last-placed *blocking* obstacle
+  until the cup is reachable again. This is a sanity gate, not a dice solver.
 - **Print-friendly**: light line-art, minimal heavy fills, Letter `@page`. Print
   with margins None + background graphics on. Keep new art light on ink.
 - **Browser + Node**: `minigolf.js` must keep working in both.
