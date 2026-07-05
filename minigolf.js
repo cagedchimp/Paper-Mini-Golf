@@ -32,8 +32,8 @@
   // Sand and water are passable — you just drag across them, they only
   // flavor / score. Rocks, trees, posts, bumper bars and islands are solid.
   var BLOCKS_PATH = {
-    sand: false, water: false,
-    rocks: true, trees: true, island: true, post: true, bar: true
+    sand: false, water: false, hill: false,
+    rocks: true, trees: true, island: true, post: true, bar: true, gate: true
   };
 
   /* ------------------------------------------------------------------ *
@@ -172,8 +172,43 @@
   // axis and turn 90°, so the thickened union is a rectilinear region whose
   // silhouette reads as straight / dogleg / zig-zag depending on the jogs.
   // The full-traversal shape (top -> bottom) keeps tee and cup far apart.
-  // Returns { grid, tee, cup, jogs }.
+  // Returns { grid, tee, cup }.
+  //
+  // Dispatcher: most holes descend top->bottom; some are hairpins that fold
+  // back on themselves (down one arm, around the bottom, back up the other).
   function carveRegion(rng, cols, rows) {
+    if (cols >= 9 && rng.chance(0.34)) return buildHairpin(rng, cols, rows);
+    return buildDescending(rng, cols, rows);
+  }
+
+  // A U-shaped hole: two vertical arms joined at the bottom, with an uncarved
+  // divider between them so the lane genuinely doubles back on itself.
+  function buildHairpin(rng, cols, rows) {
+    var g = makeGrid(cols, rows);
+    var lane = 1;
+    var pad = lane;
+    var bottom = rows - 1 - pad;
+    var gap = 2 * lane + 2;               // keeps >=1 uncarved divider column
+    var leftX = rng.int(pad + 1, Math.max(pad + 1, ((cols / 2) | 0) - 1));
+    var rightX = clampi(leftX + gap + rng.int(0, 1), leftX + gap, cols - 1 - pad);
+    if (rightX - leftX < gap) return buildDescending(rng, cols, rows);
+    // right arm sometimes stops short so the cup sits partway up
+    var rightTop = rng.chance(0.5) ? pad : clampi(pad + rng.int(2, 4), pad, bottom - 2);
+
+    thicken(g, cols, rows, leftX, pad, leftX, bottom, lane);       // left arm, full
+    thicken(g, cols, rows, leftX, bottom, rightX, bottom, lane);   // bottom connector
+    thicken(g, cols, rows, rightX, rightTop, rightX, bottom, lane); // right arm, up to cup
+
+    carveRect(g, cols, rows, leftX - lane, pad - lane, leftX + lane, pad + lane);
+    carveRect(g, cols, rows, rightX - lane, rightTop - lane, rightX + lane, rightTop + lane);
+
+    g = normalizeRegion(g, cols, rows);
+    var tee = nearestPlayable(g, cols, rows, leftX, pad);
+    var cup = nearestPlayable(g, cols, rows, rightX, rightTop);
+    return { grid: g, tee: tee, cup: cup };
+  }
+
+  function buildDescending(rng, cols, rows) {
     var g = makeGrid(cols, rows);
     var lane = rng.pick([1, 1, 1, 2]);   // half-width: 1 -> 3 cells, 2 -> 5 cells
     var pad = lane;
@@ -343,9 +378,9 @@
     return false;
   }
 
-  // BFS parent-trace tee->cup over playable cells, dilated by 1 -> the
-  // protected corridor that hazards must never seal.
-  function protectedCorridor(grid, cols, rows, tee, cup) {
+  // BFS parent-trace tee->cup; returns the path as an ordered list of cells
+  // (tee first, cup last), or [] if the cup is unreachable.
+  function corridorPath(grid, cols, rows, tee, cup) {
     var prev = new Int32Array(cols * rows); for (var i = 0; i < prev.length; i++) prev[i] = -2;
     var q = [tee]; prev[gi(cols, tee[0], tee[1])] = -1; var head = 0;
     while (head < q.length) {
@@ -359,25 +394,50 @@
         prev[id] = gi(cols, p[0], p[1]); q.push([nc, nr]);
       }
     }
-    var prot = new Uint8Array(cols * rows);
+    if (prev[gi(cols, cup[0], cup[1])] === -2) return [];
+    var path = [];
     var walk = gi(cols, cup[0], cup[1]);
     while (walk >= 0) {
       var wc = walk % cols, wr = (walk - wc) / cols;
+      path.push([wc, wr]);
+      walk = prev[walk];
+    }
+    path.reverse();
+    return path;
+  }
+
+  // The corridor path dilated by 1 -> the protected corridor that blocking
+  // obstacles must never seal.
+  function protectedCorridor(grid, cols, rows, path) {
+    var prot = new Uint8Array(cols * rows);
+    for (var i = 0; i < path.length; i++) {
+      var wc = path[i][0], wr = path[i][1];
       for (var dr = -1; dr <= 1; dr++) {
         for (var dc = -1; dc <= 1; dc++) {
           if (inGrid(cols, rows, wc + dc, wr + dr)) prot[gi(cols, wc + dc, wr + dr)] = 1;
         }
       }
-      walk = prev[walk];
     }
     return prot;
+  }
+
+  function nearestPlayable(g, cols, rows, c, r) {
+    if (getCell(g, cols, rows, c, r)) return [c, r];
+    for (var rad = 1; rad < Math.max(cols, rows); rad++) {
+      for (var dr = -rad; dr <= rad; dr++) {
+        for (var dc = -rad; dc <= rad; dc++) {
+          if (getCell(g, cols, rows, c + dc, r + dr)) return [c + dc, r + dr];
+        }
+      }
+    }
+    return [c, r];
   }
 
   /* ------------------------------------------------------------------ *
    * Hazards + baffles                                                   *
    * ------------------------------------------------------------------ */
 
-  var HAZARD_TYPES = ['sand', 'sand', 'water', 'water', 'rocks', 'trees', 'trees', 'island'];
+  var HAZARD_TYPES = ['sand', 'sand', 'water', 'water', 'rocks', 'trees', 'trees', 'island', 'hill', 'hill'];
 
   // Grow a small orthogonal blob of playable cells around a seed, staying
   // off the tee, the cup and the protected corridor.
@@ -420,11 +480,13 @@
         mask[id] = 1; avoid[id] = 1;
         markRing(avoid, cols, rows, blob[b], 0);
       }
-      out.push({
+      var haz = {
         type: type,
         cells: blob,
         outline: traceMask(mask, cols, rows).map(cornerToWorld)
-      });
+      };
+      if (type === 'hill') haz.dir = rng.pick(N4);   // downhill direction
+      out.push(haz);
     }
   }
 
@@ -519,6 +581,50 @@
     return Math.abs(c - cell[0]) <= rad && Math.abs(r - cell[1]) <= rad;
   }
 
+  // A classic gate obstacle — a windmill or a tunnel: an internal wall across
+  // the lane at a straight vertical point on the path, with a single gap to
+  // aim through. Blocks the crossed cells except the gap; the path threads
+  // the gap so the hole stays playable.
+  function placeGate(rng, grid, cols, rows, path, avoid, out) {
+    if (path.length < 6) return;
+    var cands = [];
+    for (var i = 2; i < path.length - 2; i++) {
+      var a = path[i - 1], b = path[i], c = path[i + 1];
+      if (a[0] === b[0] && b[0] === c[0]) cands.push(b);   // vertical straight run
+    }
+    if (!cands.length) return;
+    var g0 = cands[rng.int(0, cands.length - 1)];
+    var gc = g0[0], gr = g0[1];
+    if (avoid[gi(cols, gc, gr)]) return;
+
+    var cl = gc, cr = gc;
+    while (getCell(grid, cols, rows, cl - 1, gr)) cl--;
+    while (getCell(grid, cols, rows, cr + 1, gr)) cr++;
+    if (cr - cl < 1) return;                                // nothing to wall off
+
+    var cells = [];
+    for (var x = cl; x <= cr; x++) {
+      if (x === gc) continue;
+      if (avoid[gi(cols, x, gr)]) return;                  // don't build over other stuff
+      cells.push([x, gr]);
+    }
+    if (!cells.length) return;
+    for (var m = 0; m < cells.length; m++) avoid[gi(cols, cells[m][0], cells[m][1])] = 1;
+    avoid[gi(cols, gc, gr)] = 1;
+
+    var y = MARGIN + (gr + 0.5) * CELL;
+    var walls = [];
+    if (gc > cl) walls.push([{ x: MARGIN + cl * CELL, y: y }, { x: MARGIN + gc * CELL, y: y }]);
+    if (gc < cr) walls.push([{ x: MARGIN + (gc + 1) * CELL, y: y }, { x: MARGIN + (cr + 1) * CELL, y: y }]);
+    out.push({
+      type: 'gate',
+      variant: rng.chance(0.5) ? 'windmill' : 'tunnel',
+      cells: cells,
+      walls: walls,
+      gap: { x: MARGIN + (gc + 0.5) * CELL, y: y, w: CELL }
+    });
+  }
+
   /* ------------------------------------------------------------------ *
    * Hole + course assembly                                              *
    * ------------------------------------------------------------------ */
@@ -541,7 +647,8 @@
     var region = carveRegion(rng, cols, rows);
     var grid = region.grid, tee = region.tee, cup = region.cup;
 
-    var prot = protectedCorridor(grid, cols, rows, tee, cup);
+    var path = corridorPath(grid, cols, rows, tee, cup);
+    var prot = protectedCorridor(grid, cols, rows, path);
 
     // Shared reservation mask so hazards and obstacles never overlap or
     // crowd the tee / cup.
@@ -550,6 +657,10 @@
     markRing(avoid, cols, rows, cup, 1);
 
     var hazards = [];
+    // A classic windmill / tunnel gate on some holes (placed first so its
+    // wall isn't drawn over other features).
+    if (rng.chance(0.55)) placeGate(rng.fork('gate'), grid, cols, rows, path, avoid, hazards);
+
     var area = 0;
     for (var a = 0; a < grid.length; a++) area += grid[a];
     var terrainCount = Math.max(2, Math.min(5, Math.round(area / 22)));
@@ -570,7 +681,9 @@
     }
 
     var outline = traceMask(grid, cols, rows).map(cornerToWorld);
-    var par = Math.max(2, Math.min(4, 2 + region.jogs));
+    // Par scales with how far the ball has to travel (longer / bounce-back
+    // holes play to a higher par).
+    var par = clampi(2 + Math.round(path.length / 9), 2, 5);
 
     // Crop the drawing box to the carved region (+ padding for the flag
     // above the cup and the START label below the tee) so every hole fills
@@ -596,8 +709,7 @@
       tee: { cell: tee, pos: cellCenter(tee[0], tee[1]) },
       cup: { cell: cup, pos: cellCenter(cup[0], cup[1]) },
       hazards: hazards,
-      par: par,
-      jogs: region.jogs
+      par: par
     };
   }
 

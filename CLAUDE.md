@@ -44,22 +44,28 @@ HTML/CSS/JS served as static files: no build step, no dependencies, no framework
   wall so lanes never pinch) so holes sweep like real mini-golf, and wraps the
   field/hazards/walls in a subtle `feTurbulence` displacement filter for a
   hand-drawn wobble. Tee/cup/flag/labels stay outside the filter to read crisply.
-- **Full-length holes**: `carveRegion` descends from a tee at the top to a cup
-  at the bottom with several horizontal jogs (slalom-biased for zig-zags, with
-  occasional wider "room" bulges at bends); tee/cup are pinned to the top-most
-  and bottom-most playable cells (`extremePlayable`) so they're always at
-  opposite ends. Each hole crops its SVG to a `view` bbox so it fills its card.
+- **Hole shapes**: `carveRegion` dispatches to `buildDescending` (tee at top →
+  cup at bottom, several slalom-biased jogs and occasional "room" bulges;
+  tee/cup pinned to the top/bottom-most cells via `extremePlayable`) or
+  `buildHairpin` (~1/3 of holes on wide grids) — a U with two vertical arms and
+  an uncarved divider, so the lane genuinely doubles back on itself. Each hole
+  crops its SVG to a `view` bbox so it fills its card. `corridorPath` returns
+  the tee→cup BFS path; `protectedCorridor` dilates it; `par` scales with path
+  length.
 - **Obstacles** all live in `hole.hazards`, each tagged by `type`. Terrain
-  blobs (`placeTerrain`): sand, water, rocks, trees, flower-bed island. Solid
-  obstacles: `bar` (thick bumper wall reaching in from the outer wall, placed
-  in a slalom by `placeBars`) and `post` (a rounded-square pillar block from
-  `placePosts`). A shared `avoid` mask keeps them from overlapping or crowding
-  the tee/cup. Render posts/bars as distinct shapes — never a ringed circle
-  (reads as the tee) or a plain dark disc (reads as the cup).
+  blobs (`placeTerrain`): sand, water, rocks, trees, flower-bed `island`, and
+  passable `hill` (carries a `dir` for the downhill arrow). Solid obstacles:
+  `bar` (bumper wall slalom, `placeBars`), `post` (rounded-square pillar,
+  `placePosts`), and `gate` (a windmill/tunnel — an internal wall across the
+  lane at a straight vertical point on the path with a single gap, `placeGate`,
+  placed first). A shared `avoid` mask keeps everything from overlapping or
+  crowding the tee/cup. Render posts/bars/gates as distinct shapes — never a
+  ringed circle (reads as the tee) or a plain dark disc (reads as the cup).
 - **Playability**: `isReachable` flood-fills tee→cup over playable, non-blocking
-  cells. Sand and water are passable (`BLOCKS_PATH`); rocks, trees, island,
-  posts and bars block. The generator drops the last-placed *blocking* obstacle
-  until the cup is reachable again. This is a sanity gate, not a dice solver.
+  cells. Sand, water and hills are passable (`BLOCKS_PATH`); rocks, trees,
+  island, posts, bars and gates block (a gate's gap sits on the path). The
+  generator drops the last-placed *blocking* obstacle until the cup is
+  reachable again. This is a sanity gate, not a dice solver.
 - **Print-friendly**: light line-art, minimal heavy fills, Letter `@page`. Print
   with margins None + background graphics on. Keep new art light on ink.
 - **Browser + Node**: `minigolf.js` must keep working in both.

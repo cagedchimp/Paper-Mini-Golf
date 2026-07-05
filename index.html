@@ -226,6 +226,8 @@
     rock: '#ececee', rockLine: '#a9abb0', pebble: '#f6f6f7',
     treeFill: '#eef4e6', treeEdge: '#cfe0c1', treeTop: '#6f9e5f', treeTopEdge: '#4d7a45', treeTrunk: '#9a7a52',
     islandFill: '#eaf3e0', flower2: '#e8b24a', flower3: '#c98bd0',
+    hillFill: '#f1efdd', hillLine: '#cabf94', hillArrow: '#a5854a',
+    brick: '#c99a76', brickDark: '#41332b',
     flag: '#e2604f', flagEdge: '#c14b3c'
   };
 
@@ -295,7 +297,8 @@
 
     // terrain hazards (under the wall)
     for (var i = 0; i < hole.hazards.length; i++) {
-      if (hole.hazards[i].type !== 'bar' && hole.hazards[i].type !== 'post') {
+      var ht = hole.hazards[i].type;
+      if (ht !== 'bar' && ht !== 'post' && ht !== 'gate') {
         s += renderHazard(hole.hazards[i], radius);
       }
     }
@@ -304,10 +307,12 @@
     s += '<path d="' + roundedPath(hole.outline, radius) +
       '" fill="none" stroke="' + COL.wall + '" stroke-width="5" stroke-linejoin="round" stroke-linecap="round"/>';
 
-    // solid obstacles ON TOP of the wall — bumper bars and posts
+    // solid obstacles ON TOP of the wall — gates, bumper bars and posts
     for (var o = 0; o < hole.hazards.length; o++) {
       var ob = hole.hazards[o];
-      if (ob.type === 'bar') {
+      if (ob.type === 'gate') {
+        s += renderGate(ob);
+      } else if (ob.type === 'bar') {
         s += '<path d="' + pathPts(ob.seg, false) + '" fill="none" stroke="' + COL.wall +
           '" stroke-width="' + fmt(ob.width) + '" stroke-linecap="round"/>';
       } else if (ob.type === 'post') {
@@ -349,6 +354,13 @@
         var cr = centerOf(h.cells[r]);
         out += pebble(cr.x - 6, cr.y + 2, 7) + pebble(cr.x + 7, cr.y - 4, 6) + pebble(cr.x + 3, cr.y + 8, 5);
       }
+    } else if (h.type === 'hill') { // a mound with contour lines + downhill arrow
+      out += '<path d="' + d + '" fill="' + COL.hillFill + '" stroke="' + COL.hillLine + '" stroke-width="1.5"/>';
+      // inner contour ring
+      out += '<path d="' + roundedPath(inset(h.outline, 7), radius * 0.7) +
+        '" fill="none" stroke="' + COL.hillLine + '" stroke-width="1.2"/>';
+      var hc = hazardCenter(h);
+      out += chevrons(hc.x, hc.y, h.dir || [0, 1]);
     } else if (h.type === 'island') { // flower-bed planter obstacle
       out += '<path d="' + d + '" fill="' + COL.islandFill + '" stroke="' + COL.wall + '" stroke-width="3"/>';
       for (var f = 0; f < h.cells.length; f++) {
@@ -384,6 +396,71 @@
     return '<path d="M' + fmt(x) + ' ' + fmt(y - 13) + ' L' + fmt(x + 9) + ' ' + fmt(y + 4) +
       ' L' + fmt(x - 9) + ' ' + fmt(y + 4) + ' Z" fill="' + COL.treeTop + '" stroke="' + COL.treeTopEdge + '" stroke-width="1.3" stroke-linejoin="round"/>' +
       '<rect x="' + fmt(x - 2) + '" y="' + fmt(y + 4) + '" width="4" height="6" fill="' + COL.treeTrunk + '"/>';
+  }
+
+  // shrink a polygon toward its centroid, for an inner contour ring on hills
+  function inset(points, amount) {
+    var cx = 0, cy = 0, n = points.length;
+    for (var i = 0; i < n; i++) { cx += points[i].x; cy += points[i].y; }
+    cx /= n; cy /= n;
+    return points.map(function (p) {
+      var dx = cx - p.x, dy = cy - p.y, l = Math.hypot(dx, dy) || 1;
+      var m = Math.min(amount, l * 0.55);
+      return { x: p.x + dx / l * m, y: p.y + dy / l * m };
+    });
+  }
+  function hazardCenter(h) {
+    var x = 0, y = 0, n = h.cells.length;
+    for (var i = 0; i < n; i++) { var c = centerOf(h.cells[i]); x += c.x; y += c.y; }
+    return { x: x / n, y: y / n };
+  }
+  // two chevrons pointing downhill (dir is a grid direction [dx,dy])
+  function chevrons(x, y, dir) {
+    var ux = dir[0], uy = dir[1], px = -uy, py = ux, size = 6, gap = 7, out = '';
+    for (var k = 0; k < 2; k++) {
+      var bx = x + ux * (k * gap - gap / 2), by = y + uy * (k * gap - gap / 2);
+      out += '<path d="M' + fmt(bx + px * size) + ' ' + fmt(by + py * size) +
+        ' L' + fmt(bx + ux * size) + ' ' + fmt(by + uy * size) +
+        ' L' + fmt(bx - px * size) + ' ' + fmt(by - py * size) +
+        '" fill="none" stroke="' + COL.hillArrow + '" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>';
+    }
+    return out;
+  }
+
+  // classic gate: the wall segments plus a windmill or a tunnel at the gap
+  function renderGate(ob) {
+    var out = '';
+    for (var i = 0; i < ob.walls.length; i++) {
+      out += '<path d="' + pathPts(ob.walls[i], false) + '" fill="none" stroke="' + COL.wall +
+        '" stroke-width="' + fmt(CELL * 0.42) + '" stroke-linecap="round"/>';
+    }
+    return out + (ob.variant === 'windmill' ? windmill(ob.gap.x, ob.gap.y) : tunnel(ob.gap.x, ob.gap.y));
+  }
+
+  // top-down windmill: a pinwheel of four blades on a hub, sitting on the gap
+  function windmill(cx, cy) {
+    var R = CELL * 0.5, out = '<g>';
+    for (var a = 0; a < 4; a++) {
+      var ang = a * Math.PI / 2 + 0.35;
+      var tx = cx + Math.cos(ang) * R, ty = cy + Math.sin(ang) * R;
+      var sx = cx + Math.cos(ang + 1.15) * R * 0.42, sy = cy + Math.sin(ang + 1.15) * R * 0.42;
+      out += '<path d="M' + fmt(cx) + ' ' + fmt(cy) + ' L' + fmt(tx) + ' ' + fmt(ty) +
+        ' L' + fmt(sx) + ' ' + fmt(sy) + ' Z" fill="' + (a % 2 ? '#fff' : COL.flag) +
+        '" stroke="' + COL.wall + '" stroke-width="1.4" stroke-linejoin="round"/>';
+    }
+    out += '<circle cx="' + fmt(cx) + '" cy="' + fmt(cy) + '" r="4" fill="' + COL.wall + '"/>';
+    return out + '</g>';
+  }
+
+  // top-down tunnel: a short covered pipe the ball rolls through
+  function tunnel(cx, cy) {
+    var w = CELL * 0.5, h = CELL * 0.62;
+    return '<g>' +
+      '<rect x="' + fmt(cx - w) + '" y="' + fmt(cy - h) + '" width="' + fmt(w * 2) + '" height="' + fmt(h * 2) +
+      '" rx="' + fmt(w * 0.7) + '" fill="' + COL.brick + '" stroke="' + COL.wall + '" stroke-width="2.5"/>' +
+      '<rect x="' + fmt(cx - w * 0.5) + '" y="' + fmt(cy - h) + '" width="' + fmt(w) + '" height="' + fmt(h * 2) +
+      '" rx="' + fmt(w * 0.4) + '" fill="' + COL.brickDark + '"/>' +
+      '</g>';
   }
 
   function renderTee(hole) {
@@ -468,8 +545,10 @@
       '<li><b>Close your eyes</b> and drag the marker until you decide to stop. That is <b>1 stroke</b>.</li>' +
       '<li>Start your next stroke where the last one ended. Keep going until you reach the <b>flag</b>.</li>' +
       '<li>Write down how many strokes each hole took. <b>Fewest strokes wins!</b></li>' +
-      '<li>Try to stay inside the walls, and go around the sand, water, trees, ' +
-      'rocks, flower beds, posts and bumpers.</li>' +
+      '<li>Steer around the sand, water, trees, rocks, flower beds, posts and ' +
+      'bumpers — and aim through the gap in a <b>windmill</b> or <b>tunnel</b>.</li>' +
+      '<li><b>Hills:</b> the little arrows point downhill. If a stroke stops on a ' +
+      'hill, slide your mark one step in the arrow direction before the next stroke.</li>' +
       '</ol></div>' +
       '<div class="panel"><h2>On the course</h2><div class="legend">' +
       legendItem('var(--field)', 'Fairway') +
@@ -478,7 +557,8 @@
       legendItem('var(--rock)', 'Rocks') +
       legendItem('#eef4e6', 'Trees') +
       legendItem('#eaf3e0', 'Flower bed') +
-      legendItem('var(--ink)', 'Posts & bumpers') +
+      legendItem('#f1efdd', 'Hill (arrow = downhill)') +
+      legendItem('var(--ink)', 'Posts, bumpers & gates') +
       legendItem('var(--flag)', 'Flag = the hole') +
       '</div></div>' +
       '<div class="panel"><h2>Fun variations</h2><ul>' +
