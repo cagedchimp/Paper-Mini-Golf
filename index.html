@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Paper Mini Golf</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⛳</text></svg>">
+<style>
+  :root {
+    --ink: #2f3a34;
+    --wall: #2f3a34;
+    --field: #f4f8ef;
+    --field-edge: #d9e6cf;
+    --sand: #f6edd2;
+    --sand-dot: #cbb78a;
+    --water: #e3eff6;
+    --water-line: #93bcd6;
+    --rock: #ececee;
+    --rock-line: #a9abb0;
+    --tree-top: #6f9e5f;
+    --tree-trunk: #9a7a52;
+    --flag: #e2604f;
+    --paper: #ffffff;
+    --cut: #c7ccc8;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: #dfe3df;
+    font-family: "Nunito", "Avenir Next", "Century Gothic", "Trebuchet MS", -apple-system, "Segoe UI", sans-serif;
+    color: var(--ink);
+  }
+
+  /* ------------------------------ controls ------------------------- */
+  .controls {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    align-items: center;
+    padding: 12px 16px;
+    background: var(--ink);
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(0,0,0,.25);
+  }
+  .controls h1 {
+    font-size: 17px;
+    margin: 0 10px 0 0;
+    font-weight: 800;
+    letter-spacing: .02em;
+    white-space: nowrap;
+  }
+  .field { display: flex; align-items: center; gap: 6px; }
+  .controls label { font-size: 12px; opacity: .85; }
+  .controls input, .controls select {
+    font: inherit; font-size: 14px;
+    padding: 7px 9px; border: none; border-radius: 8px;
+  }
+  .controls input#seed { width: 140px; }
+  .controls button {
+    font: inherit; font-size: 14px; font-weight: 700;
+    padding: 8px 13px; border: none; border-radius: 8px;
+    cursor: pointer; background: #fff; color: var(--ink);
+  }
+  .controls button.primary { background: #9fd6a8; }
+  .controls button:active { transform: translateY(1px); }
+  .controls .spacer { flex: 1; }
+  .hint { width: 100%; font-size: 12px; opacity: .7; }
+
+  /* ------------------------------ sheets --------------------------- */
+  #sheets { padding: 24px 12px 60px; }
+
+  .sheet {
+    position: relative;
+    width: 8.5in;
+    max-width: 100%;
+    height: 11in;
+    margin: 0 auto 22px;
+    background: var(--paper);
+    box-shadow: 0 3px 14px rgba(0,0,0,.22);
+    overflow: hidden;
+  }
+
+  /* one roomy hole per page */
+  .sheet.roomy {
+    display: flex; flex-direction: column;
+    padding: 0.5in 0.55in;
+  }
+
+  .card-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    border-bottom: 3px solid var(--ink); padding-bottom: 6px; margin-bottom: 10px;
+  }
+  .card-head .num { font-size: 30px; font-weight: 800; }
+  .card-head .num small { font-size: 16px; font-weight: 700; opacity: .6; }
+  .card-head .par { font-size: 18px; font-weight: 700; }
+  .card-svg { flex: 1; min-height: 0; display: flex; }
+  .card-svg svg { width: 100%; height: 100%; }
+
+  .strokes {
+    margin-top: 10px; display: flex; align-items: center; gap: 8px;
+    font-size: 13px; font-weight: 700;
+  }
+  .strokes .boxes { display: flex; gap: 6px; }
+  .strokes .box {
+    width: 26px; height: 26px; border: 2px solid var(--field-edge);
+    border-radius: 6px;
+  }
+
+  /* compact: four holes per page */
+  .sheet.compact {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+  }
+  .sheet.compact::before, .sheet.compact::after {
+    content: ""; position: absolute; z-index: 1; pointer-events: none;
+  }
+  .sheet.compact::before { left: 50%; top: 0; bottom: 0; border-left: 1px dashed var(--cut); }
+  .sheet.compact::after { top: 50%; left: 0; right: 0; border-top: 1px dashed var(--cut); }
+  .quarter {
+    position: relative; overflow: hidden;
+    display: flex; flex-direction: column;
+    padding: 0.26in 0.28in;
+  }
+  .quarter .card-head { border-bottom-width: 2px; margin-bottom: 6px; }
+  .quarter .card-head .num { font-size: 20px; }
+  .quarter .card-head .num small { font-size: 12px; }
+  .quarter .card-head .par { font-size: 13px; }
+  .quarter .strokes { margin-top: 6px; font-size: 11px; }
+  .quarter .strokes .box { width: 18px; height: 18px; }
+
+  /* title + scorecard pages */
+  .sheet.info { display: flex; flex-direction: column; padding: 0.8in 0.9in; }
+  .title-name {
+    font-size: 40px; font-weight: 800; line-height: 1.1; margin: 0 0 4px;
+  }
+  .title-sub { font-size: 17px; opacity: .7; margin: 0 0 26px; font-weight: 700; }
+  .panel {
+    border: 3px solid var(--ink); border-radius: 14px; padding: 20px 24px;
+    margin-bottom: 22px;
+  }
+  .panel h2 { margin: 0 0 10px; font-size: 20px; }
+  .panel ol, .panel ul { margin: 0; padding-left: 22px; }
+  .panel li { margin: 7px 0; font-size: 15px; line-height: 1.35; }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px 26px; }
+  .legend .item { display: flex; align-items: center; gap: 9px; font-size: 14px; font-weight: 700; }
+  .swatch { width: 26px; height: 26px; border-radius: 6px; border: 2px solid var(--ink); }
+
+  table.score { width: 100%; border-collapse: collapse; font-size: 15px; }
+  table.score th, table.score td {
+    border: 2px solid var(--ink); padding: 9px 6px; text-align: center;
+  }
+  table.score th { background: #eef3ea; }
+  table.score td.lab { text-align: left; font-weight: 800; background: #f6f8f4; white-space: nowrap; }
+  table.score tr.play td:not(.lab) { height: 34px; }
+
+  .emptymsg { text-align: center; opacity: .6; padding: 60px 20px; }
+
+  /* ------------------------------ print ---------------------------- */
+  @media print {
+    body { background: #fff; }
+    .controls { display: none; }
+    #sheets { padding: 0; }
+    .sheet {
+      margin: 0; box-shadow: none; break-after: page;
+      width: 8.5in; height: 11in;
+    }
+    .sheet:last-child { break-after: auto; }
+  }
+
+  @media (max-width: 720px) {
+    .controls h1 { width: 100%; }
+    .card-head .num { font-size: 24px; }
+  }
+</style>
+<style id="page-size">@page { size: letter; margin: 0; }</style>
+</head>
+<body>
+
+<div class="controls">
+  <h1>⛳ Paper Mini Golf</h1>
+  <div class="field">
+    <label for="seed">Seed</label>
+    <input id="seed" type="text" spellcheck="false" autocomplete="off">
+  </div>
+  <button id="random">🎲 New course</button>
+  <div class="field">
+    <label for="holes">Holes</label>
+    <select id="holes"></select>
+  </div>
+  <div class="field">
+    <label for="layout">Layout</label>
+    <select id="layout">
+      <option value="roomy">Roomy — 1 per page</option>
+      <option value="compact">Compact — 4 per page</option>
+    </select>
+  </div>
+  <div class="spacer"></div>
+  <button id="print" class="primary">🖨 Print</button>
+  <div class="hint">Print with margins set to <b>None</b> and <b>Background graphics</b> on. Then grab a marker and putt with your eyes closed!</div>
+</div>
+
+<div id="sheets"><div class="emptymsg">Generating…</div></div>
+
+<script src="minigolf.js"></script>
+<script>
+(function () {
+  'use strict';
+  var PMG = window.PaperMiniGolf;
+  var CELL = PMG.CELL, MARGIN = PMG.MARGIN;
+
+  function el(id) { return document.getElementById(id); }
+  function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+  // Literal colors for SVG — var() is unreliable inside SVG presentation
+  // attributes, so the renderer uses hex directly (kept in sync with :root).
+  var COL = {
+    wall: '#2f3a34', field: '#f4f8ef',
+    sand: '#f6edd2', sandDot: '#cbb78a',
+    water: '#e3eff6', waterLine: '#93bcd6',
+    rock: '#ececee', rockLine: '#a9abb0', pebble: '#f6f6f7',
+    treeFill: '#eef4e6', treeEdge: '#cfe0c1', treeTop: '#6f9e5f', treeTopEdge: '#4d7a45', treeTrunk: '#9a7a52',
+    flag: '#e2604f', flagEdge: '#c14b3c'
+  };
+
+  /* ----------------------------- wobble ------------------------------ */
+  // Draw a straight segment as a hand-wobbled path, but PIN the endpoints
+  // so corners stay crisp and the wall still reads as straight.
+  function wobbleEdges(points, closed, rng, amp) {
+    var d = '', n = points.length;
+    var last = closed ? n : n - 1;
+    for (var i = 0; i < last; i++) {
+      var a = points[i], b = points[(i + 1) % n];
+      if (i === 0) d += 'M' + fmt(a.x) + ' ' + fmt(a.y);
+      var dx = b.x - a.x, dy = b.y - a.y;
+      var len = Math.sqrt(dx * dx + dy * dy) || 1;
+      var px = -dy / len, py = dx / len;              // unit perpendicular
+      var steps = Math.max(1, Math.round(len / 20));
+      for (var s = 1; s <= steps; s++) {
+        var t = s / steps;
+        var jx = 0, jy = 0;
+        if (s < steps) {                               // interior points jitter
+          var j = (rng.next() * 2 - 1) * amp;
+          jx = px * j; jy = py * j;
+        }
+        d += 'L' + fmt(a.x + dx * t + jx) + ' ' + fmt(a.y + dy * t + jy);
+      }
+    }
+    if (closed) d += 'Z';
+    return d;
+  }
+  function fmt(v) { return Math.round(v * 10) / 10; }
+  function pathPts(points, closed) {
+    var d = 'M' + fmt(points[0].x) + ' ' + fmt(points[0].y);
+    for (var i = 1; i < points.length; i++) d += 'L' + fmt(points[i].x) + ' ' + fmt(points[i].y);
+    if (closed) d += 'Z';
+    return d;
+  }
+
+  function centerOf(cell) {
+    return { x: MARGIN + (cell[0] + 0.5) * CELL, y: MARGIN + (cell[1] + 0.5) * CELL };
+  }
+
+  /* ----------------------------- render ------------------------------ */
+  function renderHole(hole, seed) {
+    var rng = PMG.makeRng(seed + ':wob:' + hole.index);
+    var v = hole.view;
+    var s = '<svg viewBox="' + fmt(v.x) + ' ' + fmt(v.y) + ' ' + fmt(v.w) + ' ' + fmt(v.h) +
+      '" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">';
+
+    // field
+    s += '<path d="' + wobbleEdges(hole.outline, true, rng, 1.6) +
+      '" fill="' + COL.field + '" stroke="none"/>';
+
+    // hazards (under the wall)
+    for (var i = 0; i < hole.hazards.length; i++) s += renderHazard(hole.hazards[i], rng);
+
+    // baffles
+    for (var b = 0; b < hole.baffles.length; b++) {
+      var bf = hole.baffles[b];
+      s += '<path d="' + wobbleEdges(bf, false, rng, 1.2) +
+        '" fill="none" stroke="' + COL.wall + '" stroke-width="6" stroke-linecap="round"/>';
+    }
+
+    // the wall
+    s += '<path d="' + wobbleEdges(hole.outline, true, rng, 1.9) +
+      '" fill="none" stroke="' + COL.wall + '" stroke-width="5" stroke-linejoin="round" stroke-linecap="round"/>';
+
+    s += renderTee(hole);
+    s += renderCup(hole);
+    s += '</svg>';
+    return s;
+  }
+
+  function renderHazard(h, rng) {
+    var d = wobbleEdges(h.outline, true, rng, 1.4);
+    var out = '';
+    if (h.type === 'sand') {
+      out += '<path d="' + d + '" fill="' + COL.sand + '" stroke="' + COL.sandDot + '" stroke-width="1.5"/>';
+      for (var i = 0; i < h.cells.length; i++) {
+        var c = centerOf(h.cells[i]);
+        out += dot(c.x - 7, c.y - 3) + dot(c.x + 6, c.y + 5) + dot(c.x + 1, c.y - 8);
+      }
+    } else if (h.type === 'water') {
+      out += '<path d="' + d + '" fill="' + COL.water + '" stroke="' + COL.waterLine + '" stroke-width="1.5"/>';
+      for (var w = 0; w < h.cells.length; w++) {
+        var cw = centerOf(h.cells[w]);
+        out += wave(cw.x, cw.y - 4) + wave(cw.x, cw.y + 7);
+      }
+    } else if (h.type === 'rocks') {
+      out += '<path d="' + d + '" fill="' + COL.rock + '" stroke="' + COL.rockLine + '" stroke-width="1.5"/>';
+      for (var r = 0; r < h.cells.length; r++) {
+        var cr = centerOf(h.cells[r]);
+        out += pebble(cr.x - 6, cr.y + 2, 7) + pebble(cr.x + 7, cr.y - 4, 6) + pebble(cr.x + 3, cr.y + 8, 5);
+      }
+    } else { // trees
+      out += '<path d="' + d + '" fill="' + COL.treeFill + '" stroke="' + COL.treeEdge + '" stroke-width="1.5"/>';
+      for (var t = 0; t < h.cells.length; t++) {
+        var ct = centerOf(h.cells[t]);
+        out += tree(ct.x, ct.y);
+      }
+    }
+    return out;
+  }
+
+  function dot(x, y) {
+    return '<circle cx="' + fmt(x) + '" cy="' + fmt(y) + '" r="1.6" fill="' + COL.sandDot + '"/>';
+  }
+  function wave(x, y) {
+    return '<path d="M' + fmt(x - 12) + ' ' + fmt(y) + ' q6 -5 12 0 q6 5 12 0" fill="none" stroke="' + COL.waterLine + '" stroke-width="1.6" stroke-linecap="round"/>';
+  }
+  function pebble(x, y, r) {
+    return '<circle cx="' + fmt(x) + '" cy="' + fmt(y) + '" r="' + r + '" fill="' + COL.pebble + '" stroke="' + COL.rockLine + '" stroke-width="1.5"/>';
+  }
+  function tree(x, y) {
+    return '<path d="M' + fmt(x) + ' ' + fmt(y - 13) + ' L' + fmt(x + 9) + ' ' + fmt(y + 4) +
+      ' L' + fmt(x - 9) + ' ' + fmt(y + 4) + ' Z" fill="' + COL.treeTop + '" stroke="' + COL.treeTopEdge + '" stroke-width="1.3" stroke-linejoin="round"/>' +
+      '<rect x="' + fmt(x - 2) + '" y="' + fmt(y + 4) + '" width="4" height="6" fill="' + COL.treeTrunk + '"/>';
+  }
+
+  function renderTee(hole) {
+    var p = hole.tee.pos;
+    return '<g>' +
+      '<circle cx="' + fmt(p.x) + '" cy="' + fmt(p.y) + '" r="12" fill="#fff" stroke="' + COL.wall + '" stroke-width="3"/>' +
+      '<circle cx="' + fmt(p.x) + '" cy="' + fmt(p.y) + '" r="3.5" fill="' + COL.wall + '"/>' +
+      '<text x="' + fmt(p.x) + '" y="' + fmt(p.y + 26) + '" text-anchor="middle" font-size="11" font-weight="800" fill="' + COL.wall + '" font-family="inherit">START</text>' +
+      '</g>';
+  }
+
+  function renderCup(hole) {
+    var p = hole.cup.pos;
+    var poleTop = p.y - 40;
+    return '<g>' +
+      '<circle cx="' + fmt(p.x) + '" cy="' + fmt(p.y) + '" r="9" fill="' + COL.wall + '"/>' +
+      '<circle cx="' + fmt(p.x) + '" cy="' + fmt(p.y) + '" r="9" fill="none" stroke="#fff" stroke-width="1.5"/>' +
+      '<line x1="' + fmt(p.x) + '" y1="' + fmt(p.y) + '" x2="' + fmt(p.x) + '" y2="' + fmt(poleTop) + '" stroke="' + COL.wall + '" stroke-width="2.5"/>' +
+      '<path d="M' + fmt(p.x) + ' ' + fmt(poleTop) + ' L' + fmt(p.x + 24) + ' ' + fmt(poleTop + 7) +
+      ' L' + fmt(p.x) + ' ' + fmt(poleTop + 14) + ' Z" fill="' + COL.flag + '" stroke="' + COL.flagEdge + '" stroke-width="1"/>' +
+      '<text x="' + fmt(p.x + 9) + '" y="' + fmt(poleTop + 11) + '" text-anchor="middle" font-size="9" font-weight="800" fill="#fff" font-family="inherit">' + hole.index + '</text>' +
+      '</g>';
+  }
+
+  /* ----------------------------- pages ------------------------------- */
+  function holeHead(hole) {
+    return '<div class="card-head">' +
+      '<div class="num">' + hole.index + ' <small>HOLE</small></div>' +
+      '<div class="par">Par ' + hole.par + '</div></div>';
+  }
+  function strokesRow() {
+    return '<div class="strokes">Strokes:' +
+      '<div class="boxes"><div class="box"></div><div class="box"></div></div></div>';
+  }
+
+  function buildRoomy(course) {
+    var frag = document.createDocumentFragment();
+    frag.appendChild(titlePage(course));
+    for (var i = 0; i < course.holes.length; i++) {
+      var sheet = document.createElement('div');
+      sheet.className = 'sheet roomy';
+      sheet.innerHTML = holeHead(course.holes[i]) +
+        '<div class="card-svg">' + renderHole(course.holes[i], course.seed) + '</div>' +
+        strokesRow();
+      frag.appendChild(sheet);
+    }
+    frag.appendChild(scorecardPage(course));
+    return frag;
+  }
+
+  function buildCompact(course) {
+    var frag = document.createDocumentFragment();
+    frag.appendChild(titlePage(course));
+    for (var i = 0; i < course.holes.length; i += 4) {
+      var sheet = document.createElement('div');
+      sheet.className = 'sheet compact';
+      var html = '';
+      for (var j = i; j < i + 4; j++) {
+        html += '<div class="quarter">';
+        if (j < course.holes.length) {
+          html += holeHead(course.holes[j]) +
+            '<div class="card-svg">' + renderHole(course.holes[j], course.seed) + '</div>' +
+            strokesRow();
+        }
+        html += '</div>';
+      }
+      sheet.innerHTML = html;
+      frag.appendChild(sheet);
+    }
+    frag.appendChild(scorecardPage(course));
+    return frag;
+  }
+
+  function titlePage(course) {
+    var sheet = document.createElement('div');
+    sheet.className = 'sheet info';
+    sheet.innerHTML =
+      '<div class="title-name">' + esc(course.name) + '</div>' +
+      '<div class="title-sub">' + course.holes.length + ' holes · Par ' + course.par + ' · you drew it, now play it!</div>' +
+      '<div class="panel"><h2>How to play</h2><ol>' +
+      '<li>Put your marker tip on the <b>START</b> dot of hole 1.</li>' +
+      '<li><b>Close your eyes</b> and drag the marker until you decide to stop. That is <b>1 stroke</b>.</li>' +
+      '<li>Start your next stroke where the last one ended. Keep going until you reach the <b>flag</b>.</li>' +
+      '<li>Write down how many strokes each hole took. <b>Fewest strokes wins!</b></li>' +
+      '<li>Try to stay inside the walls, and go around the sand, water, rocks and trees.</li>' +
+      '</ol></div>' +
+      '<div class="panel"><h2>On the course</h2><div class="legend">' +
+      legendItem('var(--field)', 'Fairway') +
+      legendItem('var(--sand)', 'Sand pit') +
+      legendItem('var(--water)', 'Water') +
+      legendItem('var(--rock)', 'Rocks') +
+      legendItem('#eef4e6', 'Trees') +
+      legendItem('var(--flag)', 'Flag = the hole') +
+      '</div></div>' +
+      '<div class="panel"><h2>Fun variations</h2><ul>' +
+      '<li><b>Pen flicker:</b> keep your eyes open and flick the marker to take a stroke.</li>' +
+      '<li><b>Take turns:</b> two players, two colours, one stroke each — lowest total wins.</li>' +
+      '</ul></div>';
+    return sheet;
+  }
+  function legendItem(color, label) {
+    return '<div class="item"><span class="swatch" style="background:' + color + '"></span>' + label + '</div>';
+  }
+
+  function scorecardPage(course) {
+    var sheet = document.createElement('div');
+    sheet.className = 'sheet info';
+    var head = '<tr><th class="lab">Hole</th>';
+    var par = '<tr><td class="lab">Par</td>';
+    var p1 = '<tr class="play"><td class="lab">Player 1</td>';
+    var p2 = '<tr class="play"><td class="lab">Player 2</td>';
+    for (var i = 0; i < course.holes.length; i++) {
+      head += '<th>' + (i + 1) + '</th>';
+      par += '<td>' + course.holes[i].par + '</td>';
+      p1 += '<td></td>'; p2 += '<td></td>';
+    }
+    head += '<th>Total</th></tr>';
+    par += '<td>' + course.par + '</td></tr>';
+    p1 += '<td></td></tr>'; p2 += '<td></td></tr>';
+    sheet.innerHTML =
+      '<div class="title-name">Scorecard</div>' +
+      '<div class="title-sub">' + esc(course.name) + '</div>' +
+      '<table class="score">' + head + par + p1 + p2 + '</table>' +
+      '<div class="panel" style="margin-top:26px"><h2>Keep score</h2>' +
+      '<p style="margin:0;font-size:15px;line-height:1.4">Count each stroke as 1 point and write your total for each hole. ' +
+      'Add them up at the end — the player with the <b>fewest</b> points wins the round!</p></div>';
+    return sheet;
+  }
+
+  /* ----------------------------- app --------------------------------- */
+  function currentOpts() {
+    return {
+      seed: el('seed').value.trim() || 'course',
+      holes: parseInt(el('holes').value, 10) || 6,
+      layout: el('layout').value
+    };
+  }
+
+  function rebuild() {
+    var o = currentOpts();
+    var course = PMG.generateCourse(o.seed, { holes: o.holes, layout: o.layout });
+    var host = el('sheets');
+    host.innerHTML = '';
+    host.appendChild(o.layout === 'compact' ? buildCompact(course) : buildRoomy(course));
+    syncURL(o);
+  }
+
+  function syncURL(o) {
+    var q = '?seed=' + encodeURIComponent(o.seed) + '&holes=' + o.holes + '&layout=' + o.layout;
+    history.replaceState(null, '', q);
+  }
+
+  function randomSeed() {
+    var words = ['acorn', 'putt', 'birdie', 'sprout', 'zigzag', 'clover', 'pebble',
+      'ripple', 'sunny', 'wombat', 'noodle', 'cactus', 'maple', 'pippin'];
+    return words[Math.floor(Math.random() * words.length)] + '-' +
+      Math.floor(Math.random() * 9000 + 1000);
+  }
+
+  function boot() {
+    var holesSel = el('holes');
+    for (var n = 3; n <= 9; n++) {
+      var opt = document.createElement('option');
+      opt.value = n; opt.textContent = n; if (n === 6) opt.selected = true;
+      holesSel.appendChild(opt);
+    }
+    var params = new URLSearchParams(location.search);
+    el('seed').value = params.get('seed') || randomSeed();
+    if (params.get('holes')) el('holes').value = params.get('holes');
+    if (params.get('layout')) el('layout').value = params.get('layout');
+
+    el('random').addEventListener('click', function () { el('seed').value = randomSeed(); rebuild(); });
+    el('seed').addEventListener('change', rebuild);
+    el('holes').addEventListener('change', rebuild);
+    el('layout').addEventListener('change', rebuild);
+    el('print').addEventListener('click', function () { window.print(); });
+
+    rebuild();
+  }
+
+  boot();
+})();
+</script>
+</body>
+</html>
