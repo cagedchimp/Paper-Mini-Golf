@@ -44,6 +44,13 @@ HTML/CSS/JS served as static files: no build step, no dependencies, no framework
   wall so lanes never pinch) so holes sweep like real mini-golf, and wraps the
   field/hazards/walls in a subtle `feTurbulence` displacement filter for a
   hand-drawn wobble. Tee/cup/flag/labels stay outside the filter to read crisply.
+- **Classic lane look**: lanes are a **uniform width** for the whole hole (no
+  room bulges or widened tee/cup pads), and their two ends are drawn as true
+  **semicircular caps** — `lanePath` renders the tee/cup end edges (found by
+  `capEdges` via `hole.laneW` + tee/cup position) as outward-bulging arcs, other
+  corners stay `roundedPath`-style. The card field is a soft green **grass**
+  background with a soft **clay** lane on top (`COL.grass` / `COL.field`), light
+  enough to print. Keep `:root` CSS vars and the `COL` map in sync.
 - **Hole shapes**: `carveRegion` dispatches to `buildDescending` (tee at top →
   cup at bottom, several slalom-biased jogs and occasional "room" bulges;
   tee/cup pinned to the top/bottom-most cells via `extremePlayable`) or

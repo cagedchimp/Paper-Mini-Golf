@@ -205,7 +205,7 @@
     g = normalizeRegion(g, cols, rows);
     var tee = nearestPlayable(g, cols, rows, leftX, pad);
     var cup = nearestPlayable(g, cols, rows, rightX, rightTop);
-    return { grid: g, tee: tee, cup: cup };
+    return { grid: g, tee: tee, cup: cup, lane: lane };
   }
 
   function buildDescending(rng, cols, rows) {
@@ -241,27 +241,20 @@
         var nx = clampi(x + dir * rng.int(2, 4), minX, maxX);
         if (nx === x) nx = clampi(x - dir * rng.int(2, 4), minX, maxX);
         thicken(g, cols, rows, x, segTop, nx, segTop, lane);
-        // occasional wider "room" at a bend for more interesting play space
-        if (rng.chance(0.4)) {
-          carveRect(g, cols, rows, nx - lane - 1, segTop - lane, nx + lane + 1, segTop + lane);
-        }
         x = nx;
       }
     }
     var cup = [x, bottom];
 
-    // Widen the tee box and the green so they read as pads.
-    carveRect(g, cols, rows, tee[0] - lane, tee[1] - lane, tee[0] + lane, tee[1] + lane);
-    carveRect(g, cols, rows, cup[0] - lane, cup[1] - lane, cup[0] + lane, cup[1] + lane);
-
+    // Uniform lane, classic style: no widened pads or room bulges.
     g = normalizeRegion(g, cols, rows);
 
     // Pin the tee to the very top of the carved region and the cup to the
     // very bottom, biased toward their corridor columns — so they always sit
-    // at the extremes (a full-length hole) regardless of lane width / pads.
+    // at the extremes (a full-length hole).
     tee = extremePlayable(g, cols, rows, tee[0], true);
     cup = extremePlayable(g, cols, rows, cup[0], false);
-    return { grid: g, tee: tee, cup: cup, jogs: jogs };
+    return { grid: g, tee: tee, cup: cup, lane: lane };
   }
 
   function clampi(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
@@ -703,6 +696,7 @@
     return {
       index: index,
       cols: cols, rows: rows, cell: CELL,
+      laneW: (2 * region.lane + 1) * CELL,   // world lane width (for end-cap radius)
       view: view,
       grid: grid,
       outline: outline,

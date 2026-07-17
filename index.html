@@ -7,14 +7,15 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⛳</text></svg>">
 <style>
   :root {
-    --ink: #2f3a34;
-    --wall: #2f3a34;
-    --field: #f4f8ef;
+    --ink: #3a4a3f;
+    --wall: #3a4a3f;
+    --field: #ecdccb;
+    --grass: #e2ecd4;
     --field-edge: #d9e6cf;
-    --sand: #f6edd2;
-    --sand-dot: #cbb78a;
-    --water: #e3eff6;
-    --water-line: #93bcd6;
+    --sand: #f4e4b6;
+    --sand-dot: #cbb377;
+    --water: #dfeef7;
+    --water-line: #8fbdd8;
     --rock: #ececee;
     --rock-line: #a9abb0;
     --tree-top: #6f9e5f;
@@ -103,7 +104,7 @@
   .card-head .num { font-size: 30px; font-weight: 800; }
   .card-head .num small { font-size: 16px; font-weight: 700; opacity: .6; }
   .card-head .par { font-size: 18px; font-weight: 700; }
-  .card-svg { flex: 1; min-height: 0; display: flex; }
+  .card-svg { flex: 1; min-height: 0; display: flex; background: var(--grass); border-radius: 8px; overflow: hidden; }
   .card-svg svg { width: 100%; height: 100%; }
 
   .strokes {
@@ -226,9 +227,9 @@
   // Literal colors for SVG — var() is unreliable inside SVG presentation
   // attributes, so the renderer uses hex directly (kept in sync with :root).
   var COL = {
-    wall: '#2f3a34', field: '#f4f8ef',
-    sand: '#f6edd2', sandDot: '#cbb78a',
-    water: '#e3eff6', waterLine: '#93bcd6',
+    wall: '#3a4a3f', field: '#ecdccb', grass: '#e2ecd4', grassEdge: '#cfe0bd',
+    sand: '#f4e4b6', sandDot: '#cbb377',
+    water: '#dfeef7', waterLine: '#8fbdd8',
     rock: '#ececee', rockLine: '#a9abb0', pebble: '#f6f6f7',
     treeFill: '#eef4e6', treeEdge: '#cfe0c1', treeTop: '#6f9e5f', treeTopEdge: '#4d7a45', treeTrunk: '#9a7a52',
     islandFill: '#eaf3e0', flower2: '#e8b24a', flower3: '#c98bd0',
@@ -263,6 +264,73 @@
     }
     return d + 'Z';
   }
+
+  // Like roundedPath, but the lane's two end edges (tee end + cup end, given
+  // as a set of edge indices in `caps`) are drawn as outward-bulging
+  // semicircles — the classic rounded mini-golf lane cap. Corners that touch
+  // a cap edge stay sharp (the semicircle is tangent to the side walls).
+  function lanePath(points, radius, caps, centroid) {
+    var n = points.length;
+    if (n < 3 || !caps || !caps.size) return roundedPath(points, radius);
+    var rr = [], dep = [];
+    for (var i = 0; i < n; i++) {
+      var cur = points[i], prev = points[(i - 1 + n) % n], nxt = points[(i + 1) % n];
+      var inx = cur.x - prev.x, iny = cur.y - prev.y, ilen = Math.hypot(inx, iny) || 1;
+      var ox = nxt.x - cur.x, oy = nxt.y - cur.y, olen = Math.hypot(ox, oy) || 1;
+      var capCorner = caps.has((i - 1 + n) % n) || caps.has(i);
+      var r = capCorner ? 0 : Math.min(radius, ilen * 0.45, olen * 0.45);
+      rr[i] = r;
+      dep[i] = { x: cur.x + ox / olen * r, y: cur.y + oy / olen * r,
+                 ax: cur.x - inx / ilen * r, ay: cur.y - iny / ilen * r };
+    }
+    var d = 'M' + fmt(dep[0].ax) + ' ' + fmt(dep[0].ay);
+    for (var j = 0; j < n; j++) {
+      var cj = points[j];
+      if (rr[j] > 0.1) d += 'Q' + fmt(cj.x) + ' ' + fmt(cj.y) + ' ' + fmt(dep[j].x) + ' ' + fmt(dep[j].y);
+      else d += 'L' + fmt(cj.x) + ' ' + fmt(cj.y);
+      var nj = (j + 1) % n;
+      if (caps.has(j)) {
+        var A = points[j], B = points[nj];
+        var rad = Math.hypot(B.x - A.x, B.y - A.y) / 2;
+        d += 'A' + fmt(rad) + ' ' + fmt(rad) + ' 0 0 ' + capSweep(A, B, centroid) + ' ' + fmt(B.x) + ' ' + fmt(B.y);
+      } else {
+        d += 'L' + fmt(dep[nj].ax) + ' ' + fmt(dep[nj].ay);
+      }
+    }
+    return d + 'Z';
+  }
+  // sweep flag so the semicircle bulges away from the outline centroid
+  function capSweep(a, b, c) {
+    var mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    var ux = b.x - a.x, uy = b.y - a.y;               // chord direction
+    var nx = uy, ny = -ux;                            // one normal
+    var ox = mx - c.x, oy = my - c.y;                 // outward direction
+    return (nx * ox + ny * oy) > 0 ? 1 : 0;
+  }
+  // Find the outline edges that cap the tee end and the cup end (length ~ the
+  // lane width, midpoint nearest the tee / cup).
+  function capEdges(hole) {
+    var o = hole.outline, n = o.length, caps = new Set();
+    var targets = [hole.tee.pos, hole.cup.pos];
+    for (var t = 0; t < targets.length; t++) {
+      var best = -1, bestD = 1e9;
+      for (var i = 0; i < n; i++) {
+        var a = o[i], b = o[(i + 1) % n];
+        var len = Math.hypot(b.x - a.x, b.y - a.y);
+        if (Math.abs(len - hole.laneW) > CELL * 0.6) continue;
+        var dd = Math.hypot((a.x + b.x) / 2 - targets[t].x, (a.y + b.y) / 2 - targets[t].y);
+        if (dd < bestD) { bestD = dd; best = i; }
+      }
+      if (best >= 0 && bestD < CELL * 1.1) caps.add(best);
+    }
+    return caps;
+  }
+  function centroidOf(points) {
+    var x = 0, y = 0, n = points.length;
+    for (var i = 0; i < n; i++) { x += points[i].x; y += points[i].y; }
+    return { x: x / n, y: y / n };
+  }
+
   function fmt(v) { return Math.round(v * 10) / 10; }
   function pathPts(points, closed) {
     var d = 'M' + fmt(points[0].x) + ' ' + fmt(points[0].y);
@@ -284,6 +352,10 @@
     var fid = 'rough' + hole.index;
     var fseed = (hole.index * 37 + 11) % 100;
 
+    var caps = capEdges(hole);
+    var centroid = centroidOf(hole.outline);
+    var lane = lanePath(hole.outline, radius, caps, centroid);
+
     var s = '<svg viewBox="' + fmt(v.x) + ' ' + fmt(v.y) + ' ' + fmt(v.w) + ' ' + fmt(v.h) +
       '" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">';
 
@@ -294,12 +366,16 @@
       '<feDisplacementMap in="SourceGraphic" in2="n" scale="4.5" xChannelSelector="R" yChannelSelector="G"/>' +
       '</filter></defs>';
 
+    // soft grass background behind the lane (crisp, outside the wobble filter)
+    s += '<rect x="' + fmt(v.x) + '" y="' + fmt(v.y) + '" width="' + fmt(v.w) + '" height="' + fmt(v.h) +
+      '" fill="' + COL.grass + '"/>';
+
     // Everything that should look hand-drawn goes inside the filtered group;
     // the tee, cup, flag and labels stay outside so they read crisply.
     s += '<g filter="url(#' + fid + ')">';
 
-    // field
-    s += '<path d="' + roundedPath(hole.outline, radius) + '" fill="' + COL.field + '" stroke="none"/>';
+    // the lane (carpet) with semicircular end-caps
+    s += '<path d="' + lane + '" fill="' + COL.field + '" stroke="none"/>';
 
     // terrain hazards (under the wall)
     for (var i = 0; i < hole.hazards.length; i++) {
@@ -310,7 +386,7 @@
     }
 
     // the wall
-    s += '<path d="' + roundedPath(hole.outline, radius) +
+    s += '<path d="' + lane +
       '" fill="none" stroke="' + COL.wall + '" stroke-width="5" stroke-linejoin="round" stroke-linecap="round"/>';
 
     // solid obstacles ON TOP of the wall — gates, bumper bars and posts
